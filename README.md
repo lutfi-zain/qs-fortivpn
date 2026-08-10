@@ -94,9 +94,9 @@ No custom polkit `.rules`/`.policy` files are installed by this widget.
 
 ```sh
 mkdir -p ~/.config/omarchy/plugins
-ln -s "$(pwd)/pb.fortivpn" ~/.config/omarchy/plugins/pb.fortivpn
-omarchy plugin enable pb.fortivpn
-omarchy bar move pb.fortivpn --section right   # optional
+ln -s "$(pwd)/mrpbennett.forivpn" ~/.config/omarchy/plugins/mrpbennett.forivpn
+omarchy plugin enable mrpbennett.forivpn
+omarchy bar move mrpbennett.forivpn --section right   # optional
 ```
 
 Editing files under the symlinked plugin directory hot-reloads in the
@@ -118,8 +118,7 @@ with `omarchy-shell shell rescanPlugins`.
 ## Uninstalling
 
 ```sh
-omarchy plugin disable pb.fortivpn   # or remove it from shell.json's plugins list
-rm ~/.config/omarchy/plugins/pb.fortivpn   # the symlink
+omarchy plugin disable mrpbennett.forivpn   # or remove it from shell.json's plugins list
+rm ~/.config/omarchy/plugins/mrpbennett.forivpn   # the symlink
 pkexec rm -f /etc/openfortivpn/omarchy.conf
 ```
-# qs-vpn

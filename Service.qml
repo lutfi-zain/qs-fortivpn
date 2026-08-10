@@ -18,6 +18,7 @@ Item {
 
   property bool installed: false
   property bool checkedInstalled: false
+  property string executablePath: ""
   // disconnected | connecting | connected | disconnecting | failed
   property string state: "disconnected"
   property bool refreshing: false
@@ -47,12 +48,16 @@ Item {
   signal certTrusted(string digest)
 
   property string _pendingOtp: ""
+  property real _attemptStartedAt: 0
+  property string _whichOutput: ""
   property string _startOutput: ""
   property string _startError: ""
   property string _writeStdout: ""
   property string _writeStderr: ""
   property string _stopStdout: ""
   property string _stopStderr: ""
+  property string _resetStdout: ""
+  property string _resetStderr: ""
 
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
@@ -70,6 +75,7 @@ Item {
   // Checks whether openfortivpn is on PATH. Cheap, so callable freely.
   function refresh() {
     if (whichProcess.running) return
+    _whichOutput = ""
     whichProcess.command = ["which", "openfortivpn"]
     whichProcess.running = true
   }
@@ -83,7 +89,7 @@ Item {
 
   function fetchFailureDetail() {
     if (journalProcess.running) return
-    journalProcess.command = Model.journalCommand(60)
+    journalProcess.command = Model.journalCommand(60, _attemptStartedAt)
     journalProcess.running = true
   }
 
@@ -93,7 +99,10 @@ Item {
     lastError = ""
     actionStatus = "Connecting…"
     state = "connecting"
+    _attemptStartedAt = Date.now()
     _pendingOtp = otp
+    _resetStdout = ""
+    _resetStderr = ""
     resetFailedProcess.command = Model.resetFailedCommand()
     resetFailedProcess.running = true
   }
@@ -231,9 +240,11 @@ Item {
     id: whichProcess
     running: false
     command: []
+    stdout: StdioCollector { id: whichStdout; waitForEnd: true; onStreamFinished: root._whichOutput = text }
     onExited: function(exitCode) {
       root.checkedInstalled = true
-      root.installed = exitCode === 0
+      root.executablePath = exitCode === 0 ? Model.sanitizeField(root._whichOutput) : ""
+      root.installed = root.executablePath !== ""
       if (root.installed) root.refreshStatus()
       else root.state = "disconnected"
     }
@@ -259,10 +270,23 @@ Item {
     running: false
     command: []
     onExited: function(exitCode) {
-      startProcess.command = Model.startCommand(root._pendingOtp)
+      if (exitCode !== 0) {
+        root._pendingOtp = ""
+        root.state = "failed"
+        root.lastError = Model.sanitizeField(root._resetStderr || root._resetStdout)
+          || "Failed to prepare the VPN unit."
+        root.actionStatus = ""
+        delayedRefresh.restart()
+        return
+      }
+      root._startOutput = ""
+      root._startError = ""
+      startProcess.command = Model.startCommand(root.executablePath, root._pendingOtp)
       root._pendingOtp = ""
       startProcess.running = true
     }
+    stdout: StdioCollector { id: resetStdout; waitForEnd: true; onStreamFinished: root._resetStdout = text }
+    stderr: StdioCollector { id: resetStderr; waitForEnd: true; onStreamFinished: root._resetStderr = text }
   }
 
   Process {
@@ -272,6 +296,7 @@ Item {
     stdout: StdioCollector { id: startStdout; waitForEnd: true; onStreamFinished: root._startOutput = text }
     stderr: StdioCollector { id: startStderr; waitForEnd: true; onStreamFinished: root._startError = text }
     onExited: function(exitCode) {
+      command = []
       if (exitCode !== 0) {
         root.state = "failed"
         root.lastError = Model.sanitizeField(root._startError || root._startOutput) || "Failed to start the VPN unit."
@@ -325,6 +350,7 @@ Item {
         root.lastError = Model.sanitizeField(root._writeStderr || root._writeStdout) || "Failed to update the saved configuration."
         root.actionStatus = ""
       }
+      _payload = ""
       onSuccess = null
     }
   }

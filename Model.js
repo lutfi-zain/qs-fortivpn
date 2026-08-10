@@ -56,8 +56,10 @@ function isActiveCommand() {
   return ["systemctl", "is-active", UNIT_NAME + ".service"]
 }
 
-function journalCommand(lines) {
-  return ["journalctl", "-u", UNIT_NAME + ".service", "-n", String(lines || 40), "--no-pager", "--output=cat"]
+function journalCommand(lines, sinceEpochMs) {
+  var args = ["journalctl", "-u", UNIT_NAME + ".service", "-n", String(lines || 40), "--no-pager", "--output=cat"]
+  if (sinceEpochMs > 0) args.push("--since=@" + (sinceEpochMs / 1000).toFixed(3))
+  return args
 }
 
 function stopCommand() {
@@ -75,10 +77,10 @@ function resetFailedCommand() {
 // enough for the next is-active poll to see it and pull the journal (that's
 // how the untrusted-cert digest gets surfaced). resetFailedCommand() clears
 // it explicitly before the next connect instead.
-function startCommand(otp) {
+function startCommand(executable, otp) {
   var args = ["systemd-run", "--system", "--unit=" + UNIT_NAME,
     "--property=Type=notify", "--description=Omarchy FortiVPN",
-    "/usr/bin/openfortivpn", "-c", CONF_PATH]
+    executable, "-c", CONF_PATH]
   var code = sanitizeField(otp)
   if (code !== "") args.push("--otp=" + code)
   return args

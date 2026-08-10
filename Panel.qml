@@ -7,8 +7,8 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "mrpbennett.fortivpn"
-  ipcTarget: "mrpbennett.fortivpn"
+  moduleName: "mrpbennett.forivpn"
+  ipcTarget: "mrpbennett.forivpn"
   manageIpc: false
 
   property string hostText: ""
@@ -41,13 +41,19 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  onOpenedChanged: if (opened) {
-    hostText = service.host
-    portText = service.port
-    usernameText = service.username
-    passwordText = ""
-    service.refresh()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  onOpenedChanged: {
+    if (opened) {
+      hostText = service.host
+      portText = service.port
+      usernameText = service.username
+      passwordText = ""
+      otpText = ""
+      service.refresh()
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    } else {
+      passwordText = ""
+      otpText = ""
+    }
   }
 
   // Mirrors the non-secret half of what Service just wrote to the
@@ -61,6 +67,20 @@ Panel {
     for (var key in settings) if (key !== "id") entry[key] = settings[key]
     for (var k in patch) entry[k] = patch[k]
     root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
+  function connect() {
+    if (!service.canConnect) return
+    var otp = otpText
+    otpText = ""
+    service.connect(otp)
+  }
+
+  function savePassword() {
+    if (service.busy || passwordText.length === 0) return
+    var password = passwordText
+    passwordText = ""
+    service.setPassword(password)
   }
 
   Service {
@@ -84,7 +104,7 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): string { service.refresh(); return "ok" }
-    function up(): string { service.connect(""); return "ok" }
+    function up(): string { root.otpText = ""; service.connect(""); return "ok" }
     function down(): string { service.disconnect(); return "ok" }
     function status(): string { return service.state }
   }
@@ -108,7 +128,7 @@ Panel {
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) {
         if (service.canDisconnect) service.disconnect()
-        else if (service.canConnect) service.connect(root.otpText)
+        else if (service.canConnect) root.connect()
       } else if (buttonCode === Qt.MiddleButton) {
         service.refresh()
       } else {
@@ -182,7 +202,7 @@ Panel {
                   foreground: hero.foreground
                   onToggled: {
                     if (service.canDisconnect) service.disconnect()
-                    else if (service.canConnect) service.connect(root.otpText)
+                    else if (service.canConnect) root.connect()
                   }
 
                   PanelToolTip {
@@ -319,7 +339,7 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               onTextChanged: root.passwordText = text
-              onAccepted: if (text.length > 0) service.setPassword(text)
+              onAccepted: root.savePassword()
               Keys.onEscapePressed: keyCatcher.forceActiveFocus()
             }
 
@@ -333,7 +353,7 @@ Panel {
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 enabled: !service.busy && root.passwordText.length > 0
-                onClicked: service.setPassword(root.passwordText)
+                onClicked: root.savePassword()
               }
 
               PanelActionButton {
@@ -383,7 +403,7 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               onTextChanged: root.otpText = text
-              onAccepted: if (service.canConnect) service.connect(root.otpText)
+              onAccepted: root.connect()
               Keys.onEscapePressed: keyCatcher.forceActiveFocus()
             }
 
