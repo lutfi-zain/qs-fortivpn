@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "mrpbennett.forivpn",
+  "id": "mrpbennett.fortivpn",
   "name": "FortiVPN",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "author": "User",
   "license": "MIT",
   "description": "Connect to a Fortinet SSL-VPN gateway (FortiToken 2FA) from the Omarchy bar.",

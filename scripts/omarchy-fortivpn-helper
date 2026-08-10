@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Root-owned helper for the FortiVPN Omarchy widget. Its deliberately small
+# command surface is what makes the matching passwordless sudo rule safe.
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+CONF=/etc/openfortivpn/omarchy.conf
+CONF_DIR=${CONF%/*}
+UNIT=omarchy-fortivpn
+
+fail() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+read_value() {
+  local value=""
+  IFS= read -r value || true
+  printf '%s' "$value"
+}
+
+validate_config_dir() {
+  local owner mode
+
+  [[ -d $CONF_DIR && ! -L $CONF_DIR ]] || fail "Unsafe FortiVPN configuration directory."
+  owner=$(stat -c %u -- "$CONF_DIR")
+  mode=$(stat -c %a -- "$CONF_DIR")
+  [[ $owner == 0 ]] || fail "FortiVPN configuration directory must be owned by root."
+  (( (8#$mode & 0022) == 0 )) || fail "FortiVPN configuration directory must not be group- or world-writable."
+}
+
+validate_config() {
+  local owner mode links
+
+  validate_config_dir
+  [[ -f $CONF && ! -L $CONF ]] || fail "FortiVPN configuration must be a regular file."
+  read -r owner mode links < <(stat -c '%u %a %h' -- "$CONF")
+  [[ $owner == 0 && $mode == 600 && $links == 1 ]] ||
+    fail "FortiVPN configuration must be root-owned, mode 600, and not linked."
+}
+
+write_config() {
+  local -a keys=("$@")
+  local -a values=()
+  local value key tmp i
+
+  if [[ -e $CONF_DIR || -L $CONF_DIR ]]; then validate_config_dir; fi
+  install -d -o root -g root -m 700 "$CONF_DIR"
+  if [[ -e $CONF || -L $CONF ]]; then validate_config; fi
+  for key in "${keys[@]}"; do values+=("$(read_value)"); done
+
+  for i in "${!keys[@]}"; do
+    case ${keys[i]} in
+      port)
+        [[ ${values[i]} =~ ^[0-9]{1,5}$ ]] || fail "Port must be a number between 1 and 65535."
+        (( 10#${values[i]} >= 1 && 10#${values[i]} <= 65535 )) || fail "Port must be a number between 1 and 65535."
+        ;;
+      trusted-cert)
+        [[ -z ${values[i]} || ${values[i]} =~ ^[[:xdigit:]]{64}$ ]] || fail "Trusted certificate must be a SHA-256 digest."
+        ;;
+    esac
+  done
+
+  umask 077
+  tmp=$(mktemp "$CONF.XXXXXX")
+  trap 'rm -f "$tmp"' RETURN
+  grep -vE "^($(IFS='|'; printf '%s' "${keys[*]}"))[[:space:]]*=" "$CONF" > "$tmp" 2>/dev/null || true
+  for i in "${!keys[@]}"; do
+    if [[ -n ${values[i]} ]]; then printf '%s = %s\n' "${keys[i]}" "${values[i]}" >> "$tmp"; fi
+  done
+  chmod 600 "$tmp"
+  chown root:root "$tmp"
+  mv "$tmp" "$CONF"
+  validate_config
+}
+
+case "${1:-}" in
+  write)
+    shift
+    case "$*" in
+      "host port username"|"password"|"trusted-cert") write_config "$@" ;;
+      *) fail "Unsupported FortiVPN configuration update." ;;
+    esac
+    ;;
+  reset)
+    [[ $# == 1 ]] || fail "Usage: reset"
+    # A unit that has never run is not an error for a new connection.
+    systemctl reset-failed "$UNIT.service" >/dev/null 2>&1 || true
+    ;;
+  start)
+    [[ $# -le 2 ]] || fail "Usage: start [otp]"
+    validate_config
+    systemctl reset-failed "$UNIT.service" >/dev/null 2>&1 || true
+    vpn=$(command -v openfortivpn) || fail "openfortivpn is not installed."
+    args=(systemd-run --system "--unit=$UNIT" --property=Type=notify --description=Omarchy\ FortiVPN "$vpn" -c "$CONF")
+    [[ ${2:-} != "" ]] && args+=("--otp=$2")
+    exec "${args[@]}"
+    ;;
+  stop)
+    [[ $# == 1 ]] || fail "Usage: stop"
+    exec systemctl stop "$UNIT.service"
+    ;;
+  *)
+    fail "Usage: omarchy-fortivpn-helper {write|reset|start|stop}"
+    ;;
+esac

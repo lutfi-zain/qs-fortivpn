@@ -12,6 +12,7 @@ Item {
   property real iconSize: Style.font.icon
   property color color: Color.foreground
   property color badgeColor: Color.urgent
+  property bool connected: false
   property bool connecting: false
   property bool warning: false
 
@@ -22,7 +23,7 @@ Item {
 
   Text {
     anchors.centerIn: parent
-    text: "󰖂"
+    text: root.connected ? "󰌾" : "󰌿"
     color: root.color
     font.family: Style.font.family
     font.pixelSize: root.iconSize

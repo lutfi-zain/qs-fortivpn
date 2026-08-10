@@ -7,8 +7,8 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "mrpbennett.forivpn"
-  ipcTarget: "mrpbennett.forivpn"
+  moduleName: "mrpbennett.fortivpn"
+  ipcTarget: "mrpbennett.fortivpn"
   manageIpc: false
 
   property string hostText: ""
@@ -120,6 +120,7 @@ Panel {
           iconSize: Style.space(11)
           color: root.barIconColor
           badgeColor: root.urgent
+          connected: service.connected
           connecting: root.iconSpinning
           warning: root.iconWarning
         }
@@ -189,6 +190,7 @@ Panel {
                   iconSize: Style.font.display
                   color: root.iconColor
                   badgeColor: root.urgent
+                  connected: service.connected
                   connecting: root.iconSpinning
                   warning: root.iconWarning
                 }

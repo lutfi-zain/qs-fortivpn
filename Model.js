@@ -1,7 +1,7 @@
 .pragma library
 
-var CONF_PATH = "/etc/openfortivpn/omarchy.conf"
 var UNIT_NAME = "omarchy-fortivpn"
+var HELPER_PATH = "/usr/local/libexec/omarchy-fortivpn-helper"
 
 // Strips anything that could break out of a single "key = value" config
 // line (or a stdin read) so a stray newline in a form field can never
@@ -16,40 +16,10 @@ function sanitizeSecret(value) {
   return String(value == null ? "" : value).replace(/[\r\n]/g, "")
 }
 
-// Builds the root-side shell snippet that atomically rewrites just the
-// given keys in the openfortivpn config, leaving every other key alone.
-// Values arrive over stdin (one per key, in order) rather than argv, so
-// nothing sensitive ever shows up in `ps`. An empty value clears the key.
-function configWriteScript(keys) {
-  var reads = []
-  var prints = []
-  for (var i = 0; i < keys.length; i++) {
-    reads.push("IFS= read -r V" + i + " || V" + i + "=''")
-    prints.push('  if [ -n "$V' + i + '" ]; then printf \'' + keys[i] + ' = %s\\n\' "$V' + i + '"; fi')
-  }
-  var pattern = keys.join("|").replace(/[.[\]*^$\\]/g, "\\$&")
-  return [
-    "set -e",
-    "umask 177",
-    'CONF="' + CONF_PATH + '"',
-    'touch "$CONF"',
-    'chmod 600 "$CONF"',
-    reads.join("\n"),
-    'TMP=$(mktemp "$CONF.XXXXXX")',
-    'grep -vE "^(' + pattern + ')[[:space:]]*=" "$CONF" > "$TMP" || true',
-    "{",
-    prints.join("\n"),
-    '} >> "$TMP"',
-    'chmod 600 "$TMP"',
-    'mv "$TMP" "$CONF"'
-  ].join("\n")
-}
-
-// Command array for a Quickshell Process: pkexec running the snippet via
-// bash -c. The Process must have stdinEnabled true and write one line per
-// key (in the same order as `keys`) right after onStarted.
+// Configuration changes require polkit authentication. Values still travel
+// over stdin so passwords never appear in the process list.
 function configWriteCommand(keys) {
-  return ["pkexec", "bash", "-c", configWriteScript(keys)]
+  return ["pkexec", HELPER_PATH, "write"].concat(keys)
 }
 
 function isActiveCommand() {
@@ -63,26 +33,24 @@ function journalCommand(lines, sinceEpochMs) {
 }
 
 function stopCommand() {
-  return ["systemctl", "stop", UNIT_NAME + ".service"]
+  return ["sudo", "-n", HELPER_PATH, "stop"]
 }
 
 // A unit that exited non-zero (bad OTP, untrusted cert, ...) lingers in
 // "failed" state and blocks reusing the same unit name, so this is run
 // before every connect attempt. Harmless no-op when nothing is failed.
 function resetFailedCommand() {
-  return ["systemctl", "reset-failed", UNIT_NAME + ".service"]
+  return ["sudo", "-n", HELPER_PATH, "reset"]
 }
 
 // No --collect: a failed unit needs to stay observable as "failed" long
 // enough for the next is-active poll to see it and pull the journal (that's
 // how the untrusted-cert digest gets surfaced). resetFailedCommand() clears
 // it explicitly before the next connect instead.
-function startCommand(executable, otp) {
-  var args = ["systemd-run", "--system", "--unit=" + UNIT_NAME,
-    "--property=Type=notify", "--description=Omarchy FortiVPN",
-    executable, "-c", CONF_PATH]
+function startCommand(otp) {
+  var args = ["sudo", "-n", HELPER_PATH, "start"]
   var code = sanitizeField(otp)
-  if (code !== "") args.push("--otp=" + code)
+  if (code !== "") args.push(code)
   return args
 }
 
@@ -103,9 +71,9 @@ function normalizeActiveState(raw) {
 // has changed across versions.
 function parseCertDigest(text) {
   var body = String(text || "")
-  var m = body.match(/--trusted-cert[=\s]+([0-9a-fA-F]{40,64})/)
+  var m = body.match(/--trusted-cert[=\s]+([0-9a-fA-F]{64})(?:[^0-9a-fA-F]|$)/)
   if (m) return m[1].toLowerCase()
-  m = body.match(/certificate[^\n]{0,40}sha256[^\n]{0,20}([0-9a-fA-F]{64})/i)
+  m = body.match(/certificate[^\n]{0,40}sha256[^\n]{0,20}([0-9a-fA-F]{64})(?:[^0-9a-fA-F]|$)/i)
   if (m) return m[1].toLowerCase()
   return ""
 }
@@ -125,11 +93,9 @@ function parseFailureSummary(text) {
 
 if (typeof module !== "undefined") {
   module.exports = {
-    CONF_PATH: CONF_PATH,
     UNIT_NAME: UNIT_NAME,
     sanitizeField: sanitizeField,
     sanitizeSecret: sanitizeSecret,
-    configWriteScript: configWriteScript,
     configWriteCommand: configWriteCommand,
     isActiveCommand: isActiveCommand,
     journalCommand: journalCommand,

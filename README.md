@@ -19,8 +19,8 @@ FortiClient-compatible VPN client.
 ## Requirements
 
 - `openfortivpn` on `PATH` — `sudo pacman -S openfortivpn` (Arch `extra`)
-- A polkit authentication agent running (Omarchy ships one) — connecting
-  and disconnecting trigger the standard graphical auth prompt
+- A polkit authentication agent running (Omarchy ships one) — changing
+  saved connection settings triggers the standard graphical auth prompt
 
 ## How credentials are stored
 
@@ -32,7 +32,7 @@ spelling out:
 - **Password** is never stored in `shell.json`, in QML memory longer than
   one function call, or passed on any command line. It's written straight
   into **`/etc/openfortivpn/omarchy.conf`** — a config file owned by
-  `root:root`, mode `600` — over `pkexec`'s stdin, so it never shows up in
+  `root:root`, mode `600` — over the helper's stdin, so it never shows up in
   `ps`. The widget only ever remembers a boolean ("a password is saved"),
   never the value.
 - **The FortiToken code (OTP)** is never written to disk anywhere. It's a
@@ -53,9 +53,8 @@ spelling out:
 
 Every write to the root-owned config file patches exactly one field (host+
 port+username together, or password alone, or trusted-cert alone) via a
-small `pkexec bash -c` snippet that reads the value from stdin and
-rewrites the file atomically, so an edit to one field can never clobber
-another.
+root-owned helper that reads the value from stdin and rewrites the file
+atomically, so an edit to one field can never clobber another.
 
 ## Why systemd instead of a raw process
 
@@ -74,29 +73,34 @@ plain backgrounded process:
   which is how the widget notices "gateway certificate not yet trusted"
   and shows the trust prompt instead of a generic error.
 
-## Privilege model
+## Passwordless Privilege Model
 
-Every privileged action pops the OS's normal polkit authentication dialog
-(password or fingerprint) — there's no standing passwordless access
-installed anywhere:
+Run the one-time installer after installing or updating the plugin:
 
-- Starting/stopping the VPN unit goes through `systemd-run`/`systemctl`
-  talking to the system D-Bus, which polkit gates via the standard
-  `org.freedesktop.systemd1.manage-units` action (`auth_admin`, cached for
-  a few minutes per active session — systemd/polkit's own default, not
-  something this widget configures).
-- Writing the config file goes through an explicit `pkexec bash -c '...'`
-  each time, so it always prompts.
+```sh
+./scripts/install-passwordless-helper.sh
+```
 
-No custom polkit `.rules`/`.policy` files are installed by this widget.
+It prompts once through polkit to install a root-owned helper at
+`/usr/local/libexec/omarchy-fortivpn-helper` and a mode-`440` sudoers rule.
+That rule permits only the helper's start, stop, and reset actions to run
+without a password. Configuration changes are deliberately excluded and use
+polkit authentication, preventing an arbitrary desktop process from silently
+redirecting the root VPN endpoint. Runtime actions use `sudo -n`, so a missing
+or invalid installation fails visibly instead of opening an authentication
+prompt. The helper cannot execute arbitrary commands or manage other units.
+
+This is intentionally narrower than granting passwordless `systemctl` access
+or broad polkit permission to manage system units.
 
 ## Installing
 
 ```sh
 mkdir -p ~/.config/omarchy/plugins
-ln -s "$(pwd)/mrpbennett.forivpn" ~/.config/omarchy/plugins/mrpbennett.forivpn
-omarchy plugin enable mrpbennett.forivpn
-omarchy bar move mrpbennett.forivpn --section right   # optional
+ln -s "$(pwd)" ~/.config/omarchy/plugins/mrpbennett.fortivpn
+omarchy plugin enable mrpbennett.fortivpn
+omarchy bar move mrpbennett.fortivpn --section right   # optional
+./scripts/install-passwordless-helper.sh
 ```
 
 Editing files under the symlinked plugin directory hot-reloads in the
@@ -118,7 +122,8 @@ with `omarchy-shell shell rescanPlugins`.
 ## Uninstalling
 
 ```sh
-omarchy plugin disable mrpbennett.forivpn   # or remove it from shell.json's plugins list
-rm ~/.config/omarchy/plugins/mrpbennett.forivpn   # the symlink
+omarchy plugin disable mrpbennett.fortivpn   # or remove it from shell.json's plugins list
+rm ~/.config/omarchy/plugins/mrpbennett.fortivpn   # the symlink
 pkexec rm -f /etc/openfortivpn/omarchy.conf
+pkexec rm -f /usr/local/libexec/omarchy-fortivpn-helper /etc/sudoers.d/omarchy-fortivpn
 ```

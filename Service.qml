@@ -281,7 +281,7 @@ Item {
       }
       root._startOutput = ""
       root._startError = ""
-      startProcess.command = Model.startCommand(root.executablePath, root._pendingOtp)
+      startProcess.command = Model.startCommand(root._pendingOtp)
       root._pendingOtp = ""
       startProcess.running = true
     }
@@ -327,9 +327,8 @@ Item {
     }
   }
 
-  // Root-privileged config writes. The command list is a fixed pkexec+bash
-  // invocation built by Model.configWriteCommand (never includes the value
-  // itself); the value goes over stdin so it never appears in `ps`.
+  // Root-privileged config writes go through the installed fixed-purpose
+  // helper. Values still travel over stdin instead of the command line.
   Process {
     id: writeProcess
     property var onSuccess: null
