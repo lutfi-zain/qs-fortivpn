@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "pb.fortivpn",
+  "name": "FortiVPN",
+  "version": "0.1.0",
+  "author": "User",
+  "license": "MIT",
+  "description": "Connect to a Fortinet SSL-VPN gateway (FortiToken 2FA) from the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "FortiVPN",
+    "description": "Toggle the FortiVPN tunnel, enter your FortiToken code, and manage the saved gateway/username.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 5
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 2,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 5
+      }
+    ]
+  }
+}

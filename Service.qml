@@ -1,0 +1,331 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import "Model.js" as Model
+
+// All state for the FortiVPN widget. Nothing secret ever lives in a QML
+// property for longer than one function call: passwords and the OTP are
+// written straight into a Process's stdin and dropped immediately after.
+//
+// Connection lifecycle is delegated to systemd (`systemd-run --system`
+// launches openfortivpn as a transient root unit; `systemctl is-active`
+// polls it; `systemctl stop` tears it down) so there is no pidfile or
+// process-tree bookkeeping to get wrong here. See README.md for why.
+Item {
+  id: root
+
+  property var settings: ({})
+
+  property bool installed: false
+  property bool checkedInstalled: false
+  // disconnected | connecting | connected | disconnecting | failed
+  property string state: "disconnected"
+  property bool refreshing: false
+  property string lastError: ""
+  property string actionStatus: ""
+  // Non-empty while a connect attempt is blocked on an unrecognized
+  // gateway certificate, holding the sha256 digest openfortivpn reported.
+  property string pendingTrustDigest: ""
+
+  readonly property string host: setting("host", "")
+  readonly property string port: setting("port", "443")
+  readonly property string username: setting("username", "")
+  readonly property bool hasPassword: setting("hasPassword", false) === true
+  readonly property string trustedCertDigest: setting("trustedCertDigest", "")
+  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 5, 2, 60)
+
+  readonly property bool configured: host !== "" && username !== "" && hasPassword
+  readonly property bool connected: state === "connected"
+  readonly property bool busy: whichProcess.running || statusProcess.running || startProcess.running ||
+    stopProcess.running || journalProcess.running || writeProcess.running || resetFailedProcess.running
+  readonly property bool canConnect: configured && !busy && state !== "connected" && state !== "connecting"
+  readonly property bool canDisconnect: !busy && (state === "connected" || state === "connecting")
+
+  signal passwordSaved()
+  signal passwordForgotten()
+  signal detailsSaved(string host, string port, string username)
+  signal certTrusted(string digest)
+
+  property string _pendingOtp: ""
+  property string _startOutput: ""
+  property string _startError: ""
+  property string _writeStdout: ""
+  property string _writeStderr: ""
+  property string _stopStdout: ""
+  property string _stopStderr: ""
+
+  function setting(name, fallback) {
+    var value = settings ? settings[name] : undefined
+    return value === undefined || value === null ? fallback : value
+  }
+
+  function intSetting(name, fallback, min, max) {
+    var n = parseInt(String(setting(name, fallback)), 10)
+    if (!isFinite(n)) n = fallback
+    if (n < min) n = min
+    if (n > max) n = max
+    return n
+  }
+
+  // Checks whether openfortivpn is on PATH. Cheap, so callable freely.
+  function refresh() {
+    if (whichProcess.running) return
+    whichProcess.command = ["which", "openfortivpn"]
+    whichProcess.running = true
+  }
+
+  function refreshStatus() {
+    if (!installed || statusProcess.running) return
+    refreshing = true
+    statusProcess.command = Model.isActiveCommand()
+    statusProcess.running = true
+  }
+
+  function fetchFailureDetail() {
+    if (journalProcess.running) return
+    journalProcess.command = Model.journalCommand(60)
+    journalProcess.running = true
+  }
+
+  function connect(otp) {
+    if (!canConnect) return
+    pendingTrustDigest = ""
+    lastError = ""
+    actionStatus = "Connecting…"
+    state = "connecting"
+    _pendingOtp = otp
+    resetFailedProcess.command = Model.resetFailedCommand()
+    resetFailedProcess.running = true
+  }
+
+  function disconnect() {
+    if (!canDisconnect) return
+    actionStatus = "Disconnecting…"
+    _stopStdout = ""
+    _stopStderr = ""
+    stopProcess.command = Model.stopCommand()
+    stopProcess.running = true
+  }
+
+  function trustCertificate(digest) {
+    if (busy || digest === "") return
+    actionStatus = "Trusting certificate…"
+    _runWrite(["trusted-cert"], [digest], function() {
+      root.certTrusted(digest)
+      root.pendingTrustDigest = ""
+      root.actionStatus = "Certificate trusted — press Connect to retry."
+    })
+  }
+
+  function saveConnectionDetails(hostValue, portValue, usernameValue) {
+    if (busy) return
+    var h = Model.sanitizeField(hostValue)
+    var p = Model.sanitizeField(portValue) || "443"
+    var u = Model.sanitizeField(usernameValue)
+    if (h === "" || u === "") {
+      lastError = "Host and username are required."
+      return
+    }
+    actionStatus = "Saving connection details…"
+    _runWrite(["host", "port", "username"], [h, p, u], function() {
+      root.detailsSaved(h, p, u)
+      root.actionStatus = "Connection details saved."
+    })
+  }
+
+  function dismissTrust() {
+    pendingTrustDigest = ""
+  }
+
+  function setPassword(password) {
+    if (busy) return
+    var pw = Model.sanitizeSecret(password)
+    if (pw === "") {
+      lastError = "Enter a password first."
+      return
+    }
+    actionStatus = "Saving password…"
+    _runWrite(["password"], [pw], function() {
+      root.passwordSaved()
+      root.actionStatus = "Password saved."
+    })
+  }
+
+  function forgetPassword() {
+    if (busy || !hasPassword) return
+    actionStatus = "Removing saved password…"
+    _runWrite(["password"], [""], function() {
+      root.passwordForgotten()
+      root.actionStatus = "Password removed."
+    })
+  }
+
+  function _runWrite(keys, values, onSuccessFn) {
+    writeProcess.onSuccess = onSuccessFn
+    writeProcess._payload = values.join("\n") + "\n"
+    writeProcess.command = Model.configWriteCommand(keys)
+    writeProcess.running = true
+  }
+
+  function _handleStatus(raw) {
+    var next = Model.normalizeActiveState(raw)
+    var enteredFailed = next === "failed" && state !== "failed"
+    state = next
+    if (enteredFailed) {
+      fetchFailureDetail()
+    } else if (next === "connected") {
+      actionStatus = ""
+      lastError = ""
+      pendingTrustDigest = ""
+    }
+  }
+
+  function _handleJournal(text) {
+    var digest = Model.parseCertDigest(text)
+    if (digest !== "" && digest !== trustedCertDigest) {
+      pendingTrustDigest = digest
+      lastError = ""
+    } else {
+      pendingTrustDigest = ""
+      lastError = Model.parseFailureSummary(text) || "openfortivpn failed to connect."
+    }
+    actionStatus = ""
+  }
+
+  Timer {
+    id: refreshTimer
+    interval: root.refreshIntervalSec * 1000
+    repeat: true
+    running: root.installed
+    triggeredOnStart: true
+    onTriggered: root.refreshStatus()
+  }
+
+  // Polls quickly right after a connect attempt so the icon/hero catch the
+  // activating→active (or →failed) transition without waiting a full
+  // refreshIntervalSec tick.
+  Timer {
+    id: startupRamp
+    property int ticks: 0
+    interval: 1000
+    repeat: true
+    running: false
+    onTriggered: {
+      ticks += 1
+      root.refreshStatus()
+      if (root.state === "connected" || root.state === "failed" || ticks >= 25) running = false
+    }
+    onRunningChanged: if (running) ticks = 0
+  }
+
+  Timer {
+    id: delayedRefresh
+    interval: 500
+    repeat: false
+    onTriggered: root.refreshStatus()
+  }
+
+  Component.onCompleted: root.refresh()
+
+  Process {
+    id: whichProcess
+    running: false
+    command: []
+    onExited: function(exitCode) {
+      root.checkedInstalled = true
+      root.installed = exitCode === 0
+      if (root.installed) root.refreshStatus()
+      else root.state = "disconnected"
+    }
+  }
+
+  Process {
+    id: statusProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: statusStdout; waitForEnd: true; onStreamFinished: root._handleStatus(text) }
+    onExited: function(exitCode) { root.refreshing = false }
+  }
+
+  Process {
+    id: journalProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: journalStdout; waitForEnd: true; onStreamFinished: root._handleJournal(text) }
+  }
+
+  Process {
+    id: resetFailedProcess
+    running: false
+    command: []
+    onExited: function(exitCode) {
+      startProcess.command = Model.startCommand(root._pendingOtp)
+      root._pendingOtp = ""
+      startProcess.running = true
+    }
+  }
+
+  Process {
+    id: startProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: startStdout; waitForEnd: true; onStreamFinished: root._startOutput = text }
+    stderr: StdioCollector { id: startStderr; waitForEnd: true; onStreamFinished: root._startError = text }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.state = "failed"
+        root.lastError = Model.sanitizeField(root._startError || root._startOutput) || "Failed to start the VPN unit."
+        root.actionStatus = ""
+      } else {
+        startupRamp.restart()
+      }
+      delayedRefresh.restart()
+    }
+  }
+
+  Process {
+    id: stopProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: stopStdout; waitForEnd: true; onStreamFinished: root._stopStdout = text }
+    stderr: StdioCollector { id: stopStderr; waitForEnd: true; onStreamFinished: root._stopStderr = text }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.actionStatus = ""
+        root.lastError = ""
+      } else {
+        root.actionStatus = ""
+        root.lastError = Model.sanitizeField(root._stopStderr || root._stopStdout)
+          || "Failed to disconnect the VPN."
+      }
+      delayedRefresh.restart()
+    }
+  }
+
+  // Root-privileged config writes. The command list is a fixed pkexec+bash
+  // invocation built by Model.configWriteCommand (never includes the value
+  // itself); the value goes over stdin so it never appears in `ps`.
+  Process {
+    id: writeProcess
+    property var onSuccess: null
+    property string _payload: ""
+    running: false
+    command: []
+    stdinEnabled: true
+    stdout: StdioCollector { id: writeStdout; waitForEnd: true; onStreamFinished: root._writeStdout = text }
+    stderr: StdioCollector { id: writeStderr; waitForEnd: true; onStreamFinished: root._writeStderr = text }
+    onStarted: {
+      write(_payload)
+      _payload = ""
+    }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        if (onSuccess) onSuccess()
+      } else {
+        root.lastError = Model.sanitizeField(root._writeStderr || root._writeStdout) || "Failed to update the saved configuration."
+        root.actionStatus = ""
+      }
+      onSuccess = null
+    }
+  }
+}
