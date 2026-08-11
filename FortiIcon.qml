@@ -27,14 +27,6 @@ Item {
     color: root.color
     font.family: Style.font.family
     font.pixelSize: root.iconSize
-
-    RotationAnimation on rotation {
-      running: root.connecting
-      from: 0
-      to: 360
-      duration: 1400
-      loops: Animation.Infinite
-    }
   }
 
   BorderSurface {
