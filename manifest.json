@@ -3,7 +3,7 @@
   "id": "mrpbennett.fortivpn",
   "name": "FortiVPN",
   "version": "1.1.0",
-  "author": "User",
+  "author": "Paul Bennett",
   "license": "MIT",
   "description": "Connect to a Fortinet SSL-VPN gateway (FortiToken 2FA) from the Omarchy bar.",
   "kinds": [
