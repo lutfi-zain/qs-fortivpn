@@ -3,6 +3,7 @@
 set -euo pipefail
 
 HELPER=/usr/local/libexec/omarchy-fortivpn-helper
+CLI=/usr/local/bin/omarchy-fortivpn
 SUDOERS=/etc/sudoers.d/omarchy-fortivpn
 
 if [[ ${1:-} == --install-root ]]; then
@@ -17,6 +18,7 @@ if [[ ${1:-} == --install-root ]]; then
   visudo -cf "$sudoers_tmp"
   mv "$sudoers_tmp" "$SUDOERS"
   install -D -o root -g root -m 755 "$script_dir/omarchy-fortivpn-helper" "$HELPER"
+  install -D -o root -g root -m 755 "$script_dir/omarchy-fortivpn" "$CLI"
   printf '%s\n' "Installed passwordless FortiVPN helper for $2."
   exit 0
 fi

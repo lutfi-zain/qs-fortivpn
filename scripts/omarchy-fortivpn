@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Lifecycle-only CLI for the FortiVPN Omarchy widget.
+set -euo pipefail
+
+HELPER=/usr/local/libexec/omarchy-fortivpn-helper
+
+usage() {
+  printf '%s\n' "Usage: omarchy-fortivpn start [--push] | stop" >&2
+  exit 2
+}
+
+case "${1:-}" in
+  start)
+    [[ $# == 1 || ( $# == 2 && $2 == --push ) ]] || usage
+    if [[ ${2:-} == --push ]]; then
+      exec sudo -n "$HELPER" start
+    fi
+    [[ -t 0 ]] || { printf '%s\n' "A terminal is required to enter a FortiToken code; use start --push for push approval." >&2; exit 1; }
+    IFS= read -r -s -p "FortiToken code (leave blank for push approval): " otp
+    printf '\n' >&2
+    if [[ -n $otp ]]; then
+      exec sudo -n "$HELPER" start "$otp"
+    fi
+    exec sudo -n "$HELPER" start
+    ;;
+  stop)
+    [[ $# == 1 ]] || usage
+    exec sudo -n "$HELPER" stop
+    ;;
+  *) usage ;;
+esac

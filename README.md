@@ -93,6 +93,24 @@ prompt. The helper cannot execute arbitrary commands or manage other units.
 This is intentionally narrower than granting passwordless `systemctl` access
 or broad polkit permission to manage system units.
 
+## Command line
+
+The widget UI is the source of truth for the saved gateway, password, and
+certificate trust. Once those are configured, the installed
+`omarchy-fortivpn` command can manage only the VPN lifecycle, including from
+an SSH session:
+
+```sh
+omarchy-fortivpn start          # prompts for a FortiToken code; blank uses push approval
+omarchy-fortivpn start --push   # request push approval without a prompt
+omarchy-fortivpn stop
+```
+
+Run `./scripts/install-passwordless-helper.sh` again after updating the plugin
+so it installs or updates this command. A full-tunnel VPN may interrupt the
+SSH session that started it when its routes take effect; the systemd service
+continues running and can be stopped in a later session.
+
 ## Installing
 
 ```sh
