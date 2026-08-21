@@ -1,5 +1,7 @@
 # FortiVPN Omarchy Widget
 
+![preview](preview.png)
+
 A native [Omarchy](https://omarchy.org/) bar widget for connecting to a
 Fortinet SSL-VPN gateway (FortiToken 2FA) via
 [openfortivpn](https://github.com/adrienverge/openfortivpn), the open-source
@@ -15,6 +17,7 @@ FortiClient-compatible VPN client.
 - Trust-on-first-use certificate pinning, with an explicit confirmation
   dialog showing the SHA-256 fingerprint — never auto-trusted
 - FortiToken push approval is supported too: just leave the code field blank
+- Also comes with a handy `omarchy-fortivpn` cli incase you ever need to connect via ssh
 
 ## Requirements
 
