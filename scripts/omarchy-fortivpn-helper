@@ -55,6 +55,9 @@ write_config() {
         [[ ${values[i]} =~ ^[0-9]{1,5}$ ]] || fail "Port must be a number between 1 and 65535."
         (( 10#${values[i]} >= 1 && 10#${values[i]} <= 65535 )) || fail "Port must be a number between 1 and 65535."
         ;;
+      realm)
+        [[ -z ${values[i]} || ${values[i]} =~ ^[a-zA-Z0-9._-]+$ ]] || fail "Realm must be alphanumeric."
+        ;;
       trusted-cert)
         [[ -z ${values[i]} || ${values[i]} =~ ^[[:xdigit:]]{64}$ ]] || fail "Trusted certificate must be a SHA-256 digest."
         ;;
@@ -78,7 +81,7 @@ case "${1:-}" in
   write)
     shift
     case "$*" in
-      "host port username"|"password"|"trusted-cert") write_config "$@" ;;
+      "host port username"|"host port username realm"|"realm"|"password"|"trusted-cert") write_config "$@" ;;
       *) fail "Unsupported FortiVPN configuration update." ;;
     esac
     ;;
@@ -92,13 +95,49 @@ case "${1:-}" in
     validate_config
     systemctl reset-failed "$UNIT.service" >/dev/null 2>&1 || true
     vpn=$(command -v openfortivpn) || fail "openfortivpn is not installed."
-    args=(systemd-run --system "--unit=$UNIT" --property=Type=notify --description=Omarchy\ FortiVPN "$vpn" -c "$CONF")
+    port=$(grep -E '^[[:space:]]*port[[:space:]]*=' "$CONF" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '[:space:]')
+    port=${port:-443}
+
+    raw_hosts=$(grep -E '^[[:space:]]*host[[:space:]]*=' "$CONF" 2>/dev/null | cut -d= -f2-)
+    cleaned_hosts=$(printf '%s\n' "$raw_hosts" | tr ',;' ' ')
+    read -r -a host_list <<< "$cleaned_hosts"
+
+    selected_target=""
+    if [[ ${#host_list[@]} -gt 1 ]]; then
+      for h in "${host_list[@]}"; do
+        [[ -n "$h" ]] || continue
+        target_h="${h%%:*}"
+        target_p="${h##*:}"
+        [[ "$target_h" == "$target_p" ]] && target_p="$port"
+        if timeout 1.5 bash -c "cat < /dev/null > /dev/tcp/$target_h/$target_p" 2>/dev/null; then
+          selected_target="$target_h:$target_p"
+          break
+        fi
+      done
+      if [[ -z "$selected_target" && ${#host_list[@]} -gt 0 ]]; then
+        first_h="${host_list[0]%%:*}"
+        first_p="${host_list[0]##*:}"
+        [[ "$first_h" == "$first_p" ]] && first_p="$port"
+        selected_target="$first_h:$first_p"
+      fi
+    elif [[ ${#host_list[@]} -eq 1 ]]; then
+      first_h="${host_list[0]%%:*}"
+      first_p="${host_list[0]##*:}"
+      [[ "$first_h" == "$first_p" ]] && first_p="$port"
+      selected_target="$first_h:$first_p"
+    fi
+
+    if [[ -n "$selected_target" ]]; then
+      args=(systemd-run --system "--unit=$UNIT" --property=Type=notify --description=Omarchy\ FortiVPN "$vpn" "$selected_target" -c "$CONF")
+    else
+      args=(systemd-run --system "--unit=$UNIT" --property=Type=notify --description=Omarchy\ FortiVPN "$vpn" -c "$CONF")
+    fi
     [[ ${2:-} != "" ]] && args+=("--otp=$2")
     exec "${args[@]}"
     ;;
   stop)
     [[ $# == 1 ]] || fail "Usage: stop"
-    exec systemctl stop "$UNIT.service"
+    systemctl stop "$UNIT.service" 2>/dev/null || true
     ;;
   *)
     fail "Usage: omarchy-fortivpn-helper {write|reset|start|stop}"

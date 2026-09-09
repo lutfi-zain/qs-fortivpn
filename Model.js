@@ -10,6 +10,41 @@ function sanitizeField(value) {
   return String(value == null ? "" : value).replace(/[\r\n]/g, "").trim()
 }
 
+// Normalizes one or more gateway hosts (comma/space/semicolon-delimited),
+// stripping protocol prefixes and extracting optional inline port/realm.
+function parseGateways(rawHost, defaultPort) {
+  var raw = sanitizeField(rawHost)
+  var items = raw.split(/[,;\s]+/)
+  var cleaned = []
+  var detectedPort = defaultPort || "443"
+  var detectedRealm = ""
+
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i].trim()
+    if (!item) continue
+    if (item.startsWith("https://")) item = item.substring(8)
+    if (item.startsWith("http://")) item = item.substring(7)
+    if (item.indexOf("/") !== -1) {
+      var slashParts = item.split("/")
+      item = slashParts[0]
+      if (!detectedRealm && slashParts[1]) detectedRealm = slashParts[1]
+    }
+    if (item.indexOf(":") !== -1) {
+      var colParts = item.split(":")
+      item = colParts[0]
+      if (colParts[1]) detectedPort = colParts[1]
+    }
+    if (item && cleaned.indexOf(item) === -1) {
+      cleaned.push(item)
+    }
+  }
+  return {
+    hosts: cleaned.join(", "),
+    port: detectedPort,
+    realm: detectedRealm
+  }
+}
+
 // Secrets may legitimately begin or end with whitespace. Newlines are still
 // forbidden because config writes use one stdin line per value.
 function sanitizeSecret(value) {

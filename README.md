@@ -17,6 +17,8 @@ FortiClient-compatible VPN client.
 - Trust-on-first-use certificate pinning, with an explicit confirmation
   dialog showing the SHA-256 fingerprint — never auto-trusted
 - FortiToken push approval is supported too: just leave the code field blank
+- Multi-gateway auto-failover: specify multiple comma-separated gateways; the helper probes TCP reachability and connects to the first responding host
+- Support for optional VPN realm (e.g. `vendor` or `https://gateway:4443/vendor`)
 - Also comes with a handy `omarchy-fortivpn` cli incase you ever need to connect via ssh
 
 ## Requirements
@@ -30,7 +32,7 @@ FortiClient-compatible VPN client.
 This was the interesting part of building this thing, so it's worth
 spelling out:
 
-- **Host, port, username** are non-secret and live in this widget's normal
+- **Host, port, username, realm** are non-secret and live in this widget's normal
   Omarchy `shell.json` entry, same as any other widget's settings.
 - **Password** is never stored in `shell.json`, in QML memory longer than
   one function call, or passed on any command line. It's written straight
@@ -130,8 +132,7 @@ with `omarchy-shell shell rescanPlugins`.
 
 ## First connection
 
-1. Open the panel, fill in **Gateway host**, **port** (default 443), and
-   **Username**, and click the save icon next to them.
+1. Open the panel, fill in **Gateway host** (single host or comma-separated list for failover), **port** (default 443), **Username**, and optional **Realm**, and click the save icon next to them.
 2. Enter a **Password** and click its save icon.
 3. Enter your FortiToken code (or leave it blank for push approval) and
    flip the switch / click Connect.
