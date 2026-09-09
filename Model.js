@@ -10,13 +10,24 @@ function sanitizeField(value) {
   return String(value == null ? "" : value).replace(/[\r\n]/g, "").trim()
 }
 
+function isValidHost(h) {
+  if (!h || h.length > 255) return false
+  return /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(h) && !/\.\./.test(h)
+}
+
+function isValidPort(p) {
+  if (!/^[0-9]{1,5}$/.test(p)) return false
+  var num = parseInt(p, 10)
+  return num >= 1 && num <= 65535
+}
+
 // Normalizes one or more gateway hosts (comma/space/semicolon-delimited),
-// stripping protocol prefixes and extracting optional inline port/realm.
+// stripping protocol prefixes, preserving per-gateway ports, and validating host syntax.
 function parseGateways(rawHost, defaultPort) {
   var raw = sanitizeField(rawHost)
   var items = raw.split(/[,;\s]+/)
   var cleaned = []
-  var detectedPort = defaultPort || "443"
+  var fallbackPort = defaultPort || "443"
   var detectedRealm = ""
 
   for (var i = 0; i < items.length; i++) {
@@ -27,20 +38,36 @@ function parseGateways(rawHost, defaultPort) {
     if (item.indexOf("/") !== -1) {
       var slashParts = item.split("/")
       item = slashParts[0]
-      if (!detectedRealm && slashParts[1]) detectedRealm = slashParts[1]
+      if (!detectedRealm && slashParts[1]) detectedRealm = sanitizeField(slashParts[1])
     }
+
+    var hostPart = item
+    var portPart = ""
     if (item.indexOf(":") !== -1) {
       var colParts = item.split(":")
-      item = colParts[0]
-      if (colParts[1]) detectedPort = colParts[1]
+      hostPart = colParts[0]
+      portPart = colParts[1]
     }
-    if (item && cleaned.indexOf(item) === -1) {
-      cleaned.push(item)
+
+    if (!isValidHost(hostPart)) continue
+
+    var hostEntry = hostPart
+    if (portPart !== "") {
+      if (isValidPort(portPart)) {
+        hostEntry = hostPart + ":" + portPart
+      } else {
+        continue
+      }
+    }
+
+    if (cleaned.indexOf(hostEntry) === -1) {
+      cleaned.push(hostEntry)
     }
   }
+
   return {
     hosts: cleaned.join(", "),
-    port: detectedPort,
+    port: fallbackPort,
     realm: detectedRealm
   }
 }
