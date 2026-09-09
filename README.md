@@ -17,8 +17,13 @@ FortiClient-compatible VPN client.
 - Trust-on-first-use certificate pinning, with an explicit confirmation
   dialog showing the SHA-256 fingerprint — never auto-trusted
 - FortiToken push approval is supported too: just leave the code field blank
-- Multi-gateway auto-failover: specify multiple comma-separated gateways; the helper probes TCP reachability and connects to the first responding host
-- Support for optional VPN realm (e.g. `vendor` or `https://gateway:4443/vendor`)
+- Multi-gateway auto-failover: specify multiple comma-separated gateways
+  (up to 5); the helper probes TCP reachability and connects to the first
+  responding host. **All gateways in a failover group must present the same
+  TLS certificate** — the single trusted-cert pin is validated against
+  whichever gateway is selected
+- Support for optional VPN realm (e.g. `vendor` or `https://gateway:4443/vendor`);
+  accepted characters: letters, digits, hyphens, underscores, and dots
 - Also comes with a handy `omarchy-fortivpn` cli incase you ever need to connect via ssh
 
 ## Requirements
@@ -54,7 +59,9 @@ spelling out:
   changed" without needing root to read the config file) and in the config
   file itself as `trusted-cert = <sha256>`. It's not a secret — it's a
   public fact about the server — so there's no harm in it living in both
-  places.
+  places. **Note:** when using multi-gateway failover, a single certificate
+  pin is stored and validated against whichever gateway is selected, so all
+  gateways in the list must present the same TLS certificate.
 
 Every write to the root-owned config file patches exactly one field (host+
 port+username together, or password alone, or trusted-cert alone) via a

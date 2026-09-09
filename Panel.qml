@@ -154,7 +154,7 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       blocked: hostField.activeFocus || portField.activeFocus || usernameField.activeFocus ||
-        passwordField.activeFocus || otpField.activeFocus || service.pendingTrustDigest !== ""
+        realmField.activeFocus || passwordField.activeFocus || otpField.activeFocus || service.pendingTrustDigest !== ""
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 

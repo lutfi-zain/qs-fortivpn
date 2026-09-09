@@ -70,7 +70,7 @@ write_config() {
         (( 10#${values[i]} >= 1 && 10#${values[i]} <= 65535 )) || fail "Port must be a number between 1 and 65535."
         ;;
       realm)
-        [[ -z ${values[i]} || ${values[i]} =~ ^[a-zA-Z0-9._-]+$ ]] || fail "Realm must be alphanumeric."
+        [[ -z ${values[i]} || ${values[i]} =~ ^[a-zA-Z0-9._-]+$ ]] || fail "Realm must contain only letters, digits, hyphens, underscores, or dots."
         ;;
       trusted-cert)
         [[ -z ${values[i]} || ${values[i]} =~ ^[[:xdigit:]]{64}$ ]] || fail "Trusted certificate must be a SHA-256 digest."
@@ -116,10 +116,19 @@ case "${1:-}" in
     cleaned_hosts=$(printf '%s\n' "$raw_hosts" | tr ',;' ' ')
     read -r -a host_list <<< "$cleaned_hosts"
 
+    # Cap at 5 gateways to bound total probe time.
+    MAX_GATEWAYS=5
+    if [[ ${#host_list[@]} -gt $MAX_GATEWAYS ]]; then
+      host_list=("${host_list[@]:0:$MAX_GATEWAYS}")
+    fi
     selected_target=""
     if [[ ${#host_list[@]} -gt 1 ]]; then
+      # Overall probe deadline (seconds) so a long unreachable list
+      # cannot delay connection startup indefinitely.
+      probe_deadline=$(( $(date +%s) + 8 ))
       for h in "${host_list[@]}"; do
         [[ -n "$h" ]] || continue
+        (( $(date +%s) < probe_deadline )) || break
         target_h="${h%%:*}"
         target_p="${h##*:}"
         [[ "$target_h" == "$target_p" ]] && target_p="$port"
@@ -153,7 +162,12 @@ case "${1:-}" in
     ;;
   stop)
     [[ $# == 1 ]] || fail "Usage: stop"
-    systemctl stop "$UNIT.service" 2>/dev/null || true
+    # Unit not loaded (never started / already stopped) is not an error.
+    if ! systemctl stop "$UNIT.service" 2>&1; then
+      if systemctl is-active "$UNIT.service" 2>/dev/null | grep -qE '^(active|activating)'; then
+        fail "Failed to stop the VPN unit."
+      fi
+    fi
     ;;
   *)
     fail "Usage: omarchy-fortivpn-helper {write|reset|start|stop}"
