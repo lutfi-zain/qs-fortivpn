@@ -89,7 +89,7 @@ Item {
 
   function fetchFailureDetail() {
     if (journalProcess.running) return
-    journalProcess.command = Model.journalCommand(60, _attemptStartedAt)
+    journalProcess.command = Model.journalCommand(_attemptStartedAt)
     journalProcess.running = true
   }
 

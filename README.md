@@ -72,9 +72,11 @@ plain backgrounded process:
   really established, not just that a process launched.
 - `systemctl stop` tears the tunnel down cleanly (openfortivpn handles
   `SIGTERM` to unwind pppd/routes/DNS).
-- `journalctl -u omarchy-fortivpn.service` gives readable failure logs,
-  which is how the widget notices "gateway certificate not yet trusted"
-  and shows the trust prompt instead of a generic error.
+- The installed helper reads recent logs for only
+  `omarchy-fortivpn.service`, which is how the widget notices "gateway
+  certificate not yet trusted" and shows the trust prompt instead of a
+  generic error. This works without granting the desktop user access to all
+  system journal entries.
 
 ## Passwordless Privilege Model
 
@@ -86,12 +88,14 @@ Run the one-time installer after installing or updating the plugin:
 
 It prompts once through polkit to install a root-owned helper at
 `/usr/local/libexec/omarchy-fortivpn-helper` and a mode-`440` sudoers rule.
-That rule permits only the helper's start, stop, and reset actions to run
-without a password. Configuration changes are deliberately excluded and use
-polkit authentication, preventing an arbitrary desktop process from silently
-redirecting the root VPN endpoint. Runtime actions use `sudo -n`, so a missing
-or invalid installation fails visibly instead of opening an authentication
-prompt. The helper cannot execute arbitrary commands or manage other units.
+That rule permits only the helper's start, stop, reset, and constrained journal
+actions to run without a password. The journal action accepts only an attempt
+timestamp and always reads a fixed number of entries from this VPN's unit.
+Configuration changes are deliberately excluded and use polkit authentication,
+preventing an arbitrary desktop process from silently redirecting the root VPN
+endpoint. Runtime actions use `sudo -n`, so a missing or invalid installation
+fails visibly instead of opening an authentication prompt. The helper cannot
+execute arbitrary commands, read other units' logs, or manage other units.
 
 This is intentionally narrower than granting passwordless `systemctl` access
 or broad polkit permission to manage system units.

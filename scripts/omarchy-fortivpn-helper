@@ -87,6 +87,10 @@ case "${1:-}" in
     # A unit that has never run is not an error for a new connection.
     systemctl reset-failed "$UNIT.service" >/dev/null 2>&1 || true
     ;;
+  journal)
+    [[ $# == 2 && $2 =~ ^[0-9]+\.[0-9]{3}$ ]] || fail "Usage: journal epoch-seconds"
+    exec journalctl -u "$UNIT.service" -n 60 --no-pager --output=cat "--since=@$2"
+    ;;
   start)
     [[ $# -le 2 ]] || fail "Usage: start [otp]"
     validate_config
@@ -101,6 +105,6 @@ case "${1:-}" in
     exec systemctl stop "$UNIT.service"
     ;;
   *)
-    fail "Usage: omarchy-fortivpn-helper {write|reset|start|stop}"
+    fail "Usage: omarchy-fortivpn-helper {write|reset|journal|start|stop}"
     ;;
 esac

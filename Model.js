@@ -26,10 +26,8 @@ function isActiveCommand() {
   return ["systemctl", "is-active", UNIT_NAME + ".service"]
 }
 
-function journalCommand(lines, sinceEpochMs) {
-  var args = ["journalctl", "-u", UNIT_NAME + ".service", "-n", String(lines || 40), "--no-pager", "--output=cat"]
-  if (sinceEpochMs > 0) args.push("--since=@" + (sinceEpochMs / 1000).toFixed(3))
-  return args
+function journalCommand(sinceEpochMs) {
+  return ["sudo", "-n", HELPER_PATH, "journal", (sinceEpochMs / 1000).toFixed(3)]
 }
 
 function stopCommand() {
@@ -74,6 +72,8 @@ function parseCertDigest(text) {
   var m = body.match(/--trusted-cert[=\s]+([0-9a-fA-F]{64})(?:[^0-9a-fA-F]|$)/)
   if (m) return m[1].toLowerCase()
   m = body.match(/certificate[^\n]{0,40}sha256[^\n]{0,20}([0-9a-fA-F]{64})(?:[^0-9a-fA-F]|$)/i)
+  if (m) return m[1].toLowerCase()
+  m = body.match(/sha256\s+digest\s*:[\s\S]{0,80}?([0-9a-fA-F]{64})(?:[^0-9a-fA-F]|$)/i)
   if (m) return m[1].toLowerCase()
   return ""
 }
