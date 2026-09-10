@@ -130,6 +130,10 @@ Item {
   function saveConnectionDetails(hostValue, portValue, usernameValue, realmValue) {
     if (busy) return
     var parsed = Model.parseGateways(hostValue, Model.sanitizeField(portValue))
+    if (parsed.error) {
+      lastError = parsed.error
+      return
+    }
     var h = parsed.hosts
     var p = parsed.port || "443"
     var u = Model.sanitizeField(usernameValue)

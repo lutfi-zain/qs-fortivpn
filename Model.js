@@ -21,8 +21,11 @@ function isValidPort(p) {
   return num >= 1 && num <= 65535
 }
 
+var MAX_GATEWAYS = 5
+
 // Normalizes one or more gateway hosts (comma/space/semicolon-delimited),
-// stripping protocol prefixes, preserving per-gateway ports, and validating host syntax.
+// stripping protocol prefixes, preserving per-gateway ports, and validating
+// host syntax. Returns { hosts, port, realm, error } — caller must check error.
 function parseGateways(rawHost, defaultPort) {
   var raw = sanitizeField(rawHost)
   var items = raw.split(/[,;\s]+/)
@@ -33,6 +36,7 @@ function parseGateways(rawHost, defaultPort) {
   for (var i = 0; i < items.length; i++) {
     var item = items[i].trim()
     if (!item) continue
+    var original = item
     if (item.startsWith("https://")) item = item.substring(8)
     if (item.startsWith("http://")) item = item.substring(7)
     if (item.indexOf("/") !== -1) {
@@ -43,21 +47,26 @@ function parseGateways(rawHost, defaultPort) {
 
     var hostPart = item
     var portPart = ""
-    if (item.indexOf(":") !== -1) {
-      var colParts = item.split(":")
-      hostPart = colParts[0]
-      portPart = colParts[1]
+    var colons = item.split(":")
+    if (colons.length > 2) {
+      return { hosts: "", port: fallbackPort, realm: "", error: "Malformed gateway entry: " + original }
+    }
+    if (colons.length === 2) {
+      hostPart = colons[0]
+      portPart = colons[1]
     }
 
-    if (!isValidHost(hostPart)) continue
+    if (!isValidHost(hostPart)) {
+      return { hosts: "", port: fallbackPort, realm: "", error: "Invalid gateway host: " + original }
+    }
 
-    var hostEntry = hostPart
     if (portPart !== "") {
-      if (isValidPort(portPart)) {
-        hostEntry = hostPart + ":" + portPart
-      } else {
-        continue
+      if (!isValidPort(portPart)) {
+        return { hosts: "", port: fallbackPort, realm: "", error: "Invalid port in gateway: " + original }
       }
+      var hostEntry = hostPart + ":" + portPart
+    } else {
+      var hostEntry = hostPart
     }
 
     if (cleaned.indexOf(hostEntry) === -1) {
@@ -65,10 +74,15 @@ function parseGateways(rawHost, defaultPort) {
     }
   }
 
+  if (cleaned.length > MAX_GATEWAYS) {
+    return { hosts: "", port: fallbackPort, realm: "", error: "Too many gateways (max " + MAX_GATEWAYS + ")." }
+  }
+
   return {
     hosts: cleaned.join(", "),
     port: fallbackPort,
-    realm: detectedRealm
+    realm: detectedRealm,
+    error: ""
   }
 }
 
