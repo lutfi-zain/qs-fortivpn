@@ -162,12 +162,16 @@ case "${1:-}" in
     ;;
   stop)
     [[ $# == 1 ]] || fail "Usage: stop"
-    # Unit not loaded (never started / already stopped) is not an error.
-    if ! systemctl stop "$UNIT.service" 2>&1; then
-      if systemctl is-active "$UNIT.service" 2>/dev/null | grep -qE '^(active|activating)'; then
-        fail "Failed to stop the VPN unit."
-      fi
+    if systemctl stop "$UNIT.service" 2>&1; then
+      exit 0
     fi
+    # stop failed — verify the unit is actually down before reporting success.
+    unit_state=$(systemctl is-active "$UNIT.service" 2>&1) || true
+    case "$unit_state" in
+      inactive|failed) exit 0 ;;   # unit is conclusively down
+      active|activating) fail "Failed to stop the VPN unit." ;;
+      *) fail "Could not verify VPN state after stop: $unit_state" ;;
+    esac
     ;;
   *)
     fail "Usage: omarchy-fortivpn-helper {write|reset|start|stop}"
