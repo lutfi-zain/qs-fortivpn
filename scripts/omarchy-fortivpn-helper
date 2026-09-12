@@ -52,7 +52,7 @@ write_config() {
   for i in "${!keys[@]}"; do
     case ${keys[i]} in
       host)
-        IFS=', ' read -r -a _check_hosts <<< "${values[i]}"
+        IFS=',; ' read -r -a _check_hosts <<< "${values[i]}"
         _valid_count=0
         for _h in "${_check_hosts[@]}"; do
           [[ -n "$_h" ]] || continue
@@ -69,6 +69,7 @@ write_config() {
           fi
           (( _valid_count++ )) || true
         done
+        [[ $_valid_count -ge 1 ]] || fail "At least one gateway host is required."
         [[ $_valid_count -le 5 ]] || fail "Too many gateways (max 5)."
         ;;
       port)
