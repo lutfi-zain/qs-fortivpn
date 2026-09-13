@@ -56,16 +56,30 @@ write_config() {
         _valid_count=0
         for _h in "${_check_hosts[@]}"; do
           [[ -n "$_h" ]] || continue
+          _orig_h="$_h"
+          # Reject unsupported URL schemes (only http/https allowed as prefix).
+          if [[ $_h == *"://"* ]]; then
+            if [[ $_h == https://* ]]; then _h=${_h#https://}
+            elif [[ $_h == http://* ]]; then _h=${_h#http://}
+            else fail "Unsupported protocol in gateway: $_orig_h"
+            fi
+          fi
+          # At most one path segment allowed as realm (e.g. /vendor); reject /realm/extra.
+          if [[ $_h == *"/"* ]]; then
+            _slash_count=${_h//[^\/]/}
+            [[ ${#_slash_count} -le 1 ]] || fail "Malformed gateway entry: $_orig_h"
+            _h=${_h%%/*}
+          fi
           # Reject entries with more than one colon (e.g. host:443:garbage)
           local _colon_count=${_h//[^:]/}
-          [[ ${#_colon_count} -le 1 ]] || fail "Malformed gateway entry: $_h"
+          [[ ${#_colon_count} -le 1 ]] || fail "Malformed gateway entry: $_orig_h"
           _th="${_h%%:*}"
           _tp="${_h##*:}"
           [[ $_th =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ && ! $_th =~ \.\. ]] ||
-            fail "Invalid gateway host: $_h"
+            fail "Invalid gateway host: $_orig_h"
           if [[ "$_th" != "$_tp" ]]; then
             [[ $_tp =~ ^[0-9]{1,5}$ ]] && (( 10#$_tp >= 1 && 10#$_tp <= 65535 )) ||
-              fail "Invalid port in gateway: $_h"
+              fail "Invalid port in gateway: $_orig_h"
           fi
           (( _valid_count++ )) || true
         done
@@ -123,12 +137,9 @@ case "${1:-}" in
     cleaned_hosts=$(printf '%s\n' "$raw_hosts" | tr ',;' ' ')
     read -r -a host_list <<< "$cleaned_hosts"
 
-    # Cap at 5 gateways to bound total probe time.
-    MAX_GATEWAYS=5
-    if [[ ${#host_list[@]} -gt $MAX_GATEWAYS ]]; then
-      host_list=("${host_list[@]:0:$MAX_GATEWAYS}")
+    if [[ ${#host_list[@]} -gt 5 ]]; then
+      fail "Too many gateways configured (max 5)."
     fi
-    selected_target=""
     if [[ ${#host_list[@]} -gt 1 ]]; then
       # Overall probe deadline (seconds) so a long unreachable list
       # cannot delay connection startup indefinitely.

@@ -37,10 +37,20 @@ function parseGateways(rawHost, defaultPort) {
     var item = items[i].trim()
     if (!item) continue
     var original = item
-    if (item.startsWith("https://")) item = item.substring(8)
-    if (item.startsWith("http://")) item = item.substring(7)
+    // Reject unsupported protocols (only http:// and https:// are accepted as prefixes).
+    if (item.indexOf("://") !== -1) {
+      if (item.startsWith("https://")) item = item.substring(8)
+      else if (item.startsWith("http://")) item = item.substring(7)
+      else {
+        return { hosts: "", port: fallbackPort, realm: "", error: "Unsupported protocol in gateway: " + original }
+      }
+    }
+    // Accept at most one path segment as realm (e.g. /vendor); reject /realm/extra.
     if (item.indexOf("/") !== -1) {
       var slashParts = item.split("/")
+      if (slashParts.length > 2) {
+        return { hosts: "", port: fallbackPort, realm: "", error: "Malformed gateway entry: " + original }
+      }
       item = slashParts[0]
       if (!detectedRealm && slashParts[1]) detectedRealm = sanitizeField(slashParts[1])
     }
