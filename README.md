@@ -32,12 +32,13 @@ spelling out:
 
 - **Host, port, username** are non-secret and live in this widget's normal
   Omarchy `shell.json` entry, same as any other widget's settings.
-- **Password** is never stored in `shell.json`, in QML memory longer than
-  one function call, or passed on any command line. It's written straight
+- **Password** is never stored in `shell.json` or passed on any command line.
+  It remains in transient QML/process memory only until it is handed to the
+  privileged helper, then is cleared. It's written straight
   into **`/etc/openfortivpn/omarchy.conf`** — a config file owned by
-  `root:root`, mode `600` — over the helper's stdin, so it never shows up in
-  `ps`. The widget only ever remembers a boolean ("a password is saved"),
-  never the value.
+   `root:root`, mode `600` — over the helper's stdin, so it never shows up in
+   `ps`. After handoff, the widget persists only a boolean ("a password is
+   saved"), never the value.
 - **The FortiToken code (OTP)** is never written to disk anywhere. It's a
   30–60s TOTP, so persisting it would be pointless — you type it fresh each
   time you connect (or leave it blank for a push-approval token), and it's
@@ -88,14 +89,19 @@ Run the one-time installer after installing or updating the plugin:
 
 It prompts once through polkit to install a root-owned helper at
 `/usr/local/libexec/omarchy-fortivpn-helper` and a mode-`440` sudoers rule.
-That rule permits only the helper's start, stop, reset, and constrained journal
-actions to run without a password. The journal action accepts only an attempt
+That rule permits only the helper's status, start, stop, reset, and constrained
+journal actions to run without a password. Status reports non-secret readiness
+and compatibility information. The journal action accepts only an attempt
 timestamp and always reads a fixed number of entries from this VPN's unit.
 Configuration changes are deliberately excluded and use polkit authentication,
 preventing an arbitrary desktop process from silently redirecting the root VPN
 endpoint. Runtime actions use `sudo -n`, so a missing or invalid installation
 fails visibly instead of opening an authentication prompt. The helper cannot
 execute arbitrary commands, read other units' logs, or manage other units.
+
+The installer stages and validates the helper, CLI, and sudoers policy before
+publishing them, then verifies the installed controller. It preserves the
+previous installation if publishing fails.
 
 This is intentionally narrower than granting passwordless `systemctl` access
 or broad polkit permission to manage system units.
@@ -111,6 +117,7 @@ an SSH session:
 omarchy-fortivpn start          # prompts for a FortiToken code; blank uses push approval
 omarchy-fortivpn start --push   # request push approval without a prompt
 omarchy-fortivpn stop
+omarchy-fortivpn status         # non-secret readiness diagnostics
 ```
 
 Run `./scripts/install-passwordless-helper.sh` again after updating the plugin

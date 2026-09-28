@@ -24,7 +24,9 @@ Panel {
 
   readonly property string statusText: {
     if (!service.checkedInstalled) return "Checking…"
-    if (!service.installed) return "Not installed"
+    if (!service.installed) return "Controller update required"
+    if (service.controllerCode === "dependency_missing") return "openfortivpn missing"
+    if (service.controllerCode === "config_invalid") return "Configuration needs repair"
     if (service.pendingTrustDigest !== "") return "Unrecognized certificate"
     if (service.state === "connected") return "Connected"
     if (service.state === "connecting") return "Connecting…"
@@ -198,7 +200,7 @@ Panel {
 
               trailingControl: Component {
                 ToggleSwitch {
-                  visible: service.installed && service.configured
+                  visible: service.canDisconnect || service.state === "disconnecting" || (service.installed && service.configured)
                   checked: service.connected || service.state === "connecting"
                   busy: service.busy || service.state === "disconnecting"
                   foreground: hero.foreground
@@ -208,7 +210,7 @@ Panel {
                   }
 
                   PanelToolTip {
-                    text: service.connected ? "Disconnect" : "Connect"
+                    text: service.canDisconnect ? "Disconnect" : "Connect"
                     fontFamily: hero.fontFamily
                   }
                 }
@@ -238,7 +240,9 @@ Panel {
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               anchors.margins: Style.space(12)
-              text: "openfortivpn is not installed. Install it with: sudo pacman -S openfortivpn"
+            text: service.controllerCode === "dependency_missing"
+              ? service.controllerMessage + " Install it with: sudo pacman -S openfortivpn"
+              : service.controllerMessage + " Run ./scripts/install-passwordless-helper.sh after updating the plugin."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -316,7 +320,7 @@ Panel {
                 tooltipText: "Save connection details"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                enabled: !service.busy && root.hostText.trim() !== "" && root.usernameText.trim() !== ""
+                enabled: service.canConfigure && root.hostText.trim() !== "" && root.usernameText.trim() !== ""
                 onClicked: service.saveConnectionDetails(root.hostText, root.portText, root.usernameText)
               }
 
@@ -354,7 +358,7 @@ Panel {
                 tooltipText: "Save password"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                enabled: !service.busy && root.passwordText.length > 0
+                enabled: service.canConfigure && root.passwordText.length > 0
                 onClicked: root.savePassword()
               }
 
@@ -365,7 +369,7 @@ Panel {
                 hoverColor: root.urgent
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                enabled: !service.busy
+                enabled: service.canConfigure
                 onClicked: service.forgetPassword()
               }
 

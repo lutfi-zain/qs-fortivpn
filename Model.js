@@ -2,6 +2,7 @@
 
 var UNIT_NAME = "omarchy-fortivpn"
 var HELPER_PATH = "/usr/local/libexec/omarchy-fortivpn-helper"
+var CONTROLLER_INTERFACE_VERSION = "1"
 
 // Strips anything that could break out of a single "key = value" config
 // line (or a stdin read) so a stray newline in a form field can never
@@ -22,8 +23,8 @@ function configWriteCommand(keys) {
   return ["pkexec", HELPER_PATH, "write"].concat(keys)
 }
 
-function isActiveCommand() {
-  return ["systemctl", "is-active", UNIT_NAME + ".service"]
+function statusCommand() {
+  return ["sudo", "-n", HELPER_PATH, "status"]
 }
 
 function journalCommand(sinceEpochMs) {
@@ -63,6 +64,22 @@ function normalizeActiveState(raw) {
   return "disconnected"
 }
 
+function parseStatus(text) {
+  var fields = {}
+  var lines = String(text || "").split(/\r?\n/)
+  for (var i = 0; i < lines.length; i++) {
+    var separator = lines[i].indexOf("=")
+    if (separator <= 0) continue
+    fields[lines[i].substring(0, separator)] = lines[i].substring(separator + 1)
+  }
+  if (fields.interfaceVersion !== CONTROLLER_INTERFACE_VERSION || !fields.controllerVersion || !fields.message ||
+      fields.dependencyPath === undefined || !/^(true|false)$/.test(fields.trustedCertificate || "") ||
+      !/^(ready|not_configured|dependency_missing|config_invalid)$/.test(fields.code || "") ||
+      !/^(missing|incomplete|ready|invalid)$/.test(fields.configState || "") ||
+      !/^(active|activating|deactivating|failed|inactive)$/.test(fields.unitState || "")) return null
+  return fields
+}
+
 // openfortivpn's own hint text for an unpinned gateway cert always includes
 // the literal flag it wants you to rerun with, followed by the sha256
 // digest — match on that shape rather than the surrounding wording, which
@@ -94,15 +111,17 @@ function parseFailureSummary(text) {
 if (typeof module !== "undefined") {
   module.exports = {
     UNIT_NAME: UNIT_NAME,
+    CONTROLLER_INTERFACE_VERSION: CONTROLLER_INTERFACE_VERSION,
     sanitizeField: sanitizeField,
     sanitizeSecret: sanitizeSecret,
     configWriteCommand: configWriteCommand,
-    isActiveCommand: isActiveCommand,
+    statusCommand: statusCommand,
     journalCommand: journalCommand,
     stopCommand: stopCommand,
     resetFailedCommand: resetFailedCommand,
     startCommand: startCommand,
     normalizeActiveState: normalizeActiveState,
+    parseStatus: parseStatus,
     parseCertDigest: parseCertDigest,
     parseFailureSummary: parseFailureSummary
   }

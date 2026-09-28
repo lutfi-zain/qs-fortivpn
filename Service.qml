@@ -3,9 +3,8 @@ import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
 
-// All state for the FortiVPN widget. Nothing secret ever lives in a QML
-// property for longer than one function call: passwords and the OTP are
-// written straight into a Process's stdin and dropped immediately after.
+// All state for the FortiVPN widget. Passwords and the OTP are never
+// persisted; they are cleared promptly after handoff to a Process's stdin.
 //
 // Connection lifecycle is delegated to systemd (`systemd-run --system`
 // launches openfortivpn as a transient root unit; `systemctl is-active`
@@ -18,7 +17,9 @@ Item {
 
   property bool installed: false
   property bool checkedInstalled: false
-  property string executablePath: ""
+  property string controllerCode: "incompatible"
+  property string controllerMessage: "FortiVPN controller needs installation or update."
+  property string configState: "missing"
   // disconnected | connecting | connected | disconnecting | failed
   property string state: "disconnected"
   property bool refreshing: false
@@ -35,12 +36,15 @@ Item {
   readonly property string trustedCertDigest: setting("trustedCertDigest", "")
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 5, 2, 60)
 
-  readonly property bool configured: host !== "" && username !== "" && hasPassword
+  readonly property bool configured: configState === "ready"
   readonly property bool connected: state === "connected"
-  readonly property bool busy: whichProcess.running || statusProcess.running || startProcess.running ||
+  readonly property bool busy: statusProcess.running || startProcess.running ||
     stopProcess.running || journalProcess.running || writeProcess.running || resetFailedProcess.running
-  readonly property bool canConnect: configured && !busy && state !== "connected" && state !== "connecting"
-  readonly property bool canDisconnect: !busy && (state === "connected" || state === "connecting")
+  readonly property bool canConfigure: installed && !busy
+  readonly property bool canConnect: installed && controllerCode === "ready" && configured && !busy && state !== "connected" && state !== "connecting"
+  // Stop remains available during a controller upgrade so an outdated widget
+  // cannot strand an active tunnel.
+  readonly property bool canDisconnect: !busy && (state === "connected" || state === "connecting" || !installed)
 
   signal passwordSaved()
   signal passwordForgotten()
@@ -49,7 +53,7 @@ Item {
 
   property string _pendingOtp: ""
   property real _attemptStartedAt: 0
-  property string _whichOutput: ""
+  property string _statusOutput: ""
   property string _startOutput: ""
   property string _startError: ""
   property string _writeStdout: ""
@@ -72,18 +76,17 @@ Item {
     return n
   }
 
-  // Checks whether openfortivpn is on PATH. Cheap, so callable freely.
+  // The root-owned controller is the source of truth for dependency,
+  // configuration, and lifecycle readiness.
   function refresh() {
-    if (whichProcess.running) return
-    _whichOutput = ""
-    whichProcess.command = ["which", "openfortivpn"]
-    whichProcess.running = true
+    refreshStatus()
   }
 
   function refreshStatus() {
-    if (!installed || statusProcess.running) return
+    if (statusProcess.running) return
     refreshing = true
-    statusProcess.command = Model.isActiveCommand()
+    _statusOutput = ""
+    statusProcess.command = Model.statusCommand()
     statusProcess.running = true
   }
 
@@ -110,6 +113,7 @@ Item {
   function disconnect() {
     if (!canDisconnect) return
     actionStatus = "Disconnecting…"
+    state = "disconnecting"
     _stopStdout = ""
     _stopStderr = ""
     stopProcess.command = Model.stopCommand()
@@ -117,7 +121,7 @@ Item {
   }
 
   function trustCertificate(digest) {
-    if (busy || digest === "") return
+    if (!canConfigure || digest === "") return
     actionStatus = "Trusting certificate…"
     _runWrite(["trusted-cert"], [digest], function() {
       root.certTrusted(digest)
@@ -127,7 +131,7 @@ Item {
   }
 
   function saveConnectionDetails(hostValue, portValue, usernameValue) {
-    if (busy) return
+    if (!canConfigure) return
     var h = Model.sanitizeField(hostValue)
     var p = Model.sanitizeField(portValue) || "443"
     var u = Model.sanitizeField(usernameValue)
@@ -147,7 +151,7 @@ Item {
   }
 
   function setPassword(password) {
-    if (busy) return
+    if (!canConfigure) return
     var pw = Model.sanitizeSecret(password)
     if (pw === "") {
       lastError = "Enter a password first."
@@ -161,7 +165,7 @@ Item {
   }
 
   function forgetPassword() {
-    if (busy || !hasPassword) return
+    if (!canConfigure || !hasPassword) return
     actionStatus = "Removing saved password…"
     _runWrite(["password"], [""], function() {
       root.passwordForgotten()
@@ -177,7 +181,21 @@ Item {
   }
 
   function _handleStatus(raw) {
-    var next = Model.normalizeActiveState(raw)
+    var status = Model.parseStatus(raw)
+    checkedInstalled = true
+    if (!status) {
+      installed = false
+      controllerCode = "incompatible"
+      controllerMessage = "FortiVPN controller needs installation or update."
+      configState = "missing"
+      state = "disconnected"
+      return
+    }
+    installed = true
+    controllerCode = status.code
+    controllerMessage = status.message
+    configState = status.configState
+    var next = Model.normalizeActiveState(status.unitState)
     var enteredFailed = next === "failed" && state !== "failed"
     state = next
     if (enteredFailed) {
@@ -205,7 +223,7 @@ Item {
     id: refreshTimer
     interval: root.refreshIntervalSec * 1000
     repeat: true
-    running: root.installed
+    running: true
     triggeredOnStart: true
     onTriggered: root.refreshStatus()
   }
@@ -234,28 +252,17 @@ Item {
     onTriggered: root.refreshStatus()
   }
 
-  Component.onCompleted: root.refresh()
-
-  Process {
-    id: whichProcess
-    running: false
-    command: []
-    stdout: StdioCollector { id: whichStdout; waitForEnd: true; onStreamFinished: root._whichOutput = text }
-    onExited: function(exitCode) {
-      root.checkedInstalled = true
-      root.executablePath = exitCode === 0 ? Model.sanitizeField(root._whichOutput) : ""
-      root.installed = root.executablePath !== ""
-      if (root.installed) root.refreshStatus()
-      else root.state = "disconnected"
-    }
-  }
+  Component.onCompleted: root.refreshStatus()
 
   Process {
     id: statusProcess
     running: false
     command: []
-    stdout: StdioCollector { id: statusStdout; waitForEnd: true; onStreamFinished: root._handleStatus(text) }
-    onExited: function(exitCode) { root.refreshing = false }
+    stdout: StdioCollector { id: statusStdout; waitForEnd: true; onStreamFinished: root._statusOutput = text }
+    onExited: function(exitCode) {
+      root._handleStatus(exitCode === 0 ? root._statusOutput : "")
+      root.refreshing = false
+    }
   }
 
   Process {
@@ -345,6 +352,7 @@ Item {
     onExited: function(exitCode) {
       if (exitCode === 0) {
         if (onSuccess) onSuccess()
+        delayedRefresh.restart()
       } else {
         root.lastError = Model.sanitizeField(root._writeStderr || root._writeStdout) || "Failed to update the saved configuration."
         root.actionStatus = ""

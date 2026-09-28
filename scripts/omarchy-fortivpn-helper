@@ -7,6 +7,8 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 CONF=/etc/openfortivpn/omarchy.conf
 CONF_DIR=${CONF%/*}
 UNIT=omarchy-fortivpn
+CONTROLLER_VERSION=1.2.0
+CONTROLLER_INTERFACE_VERSION=1
 
 fail() {
   printf '%s\n' "$*" >&2
@@ -37,6 +39,61 @@ validate_config() {
   read -r owner mode links < <(stat -c '%u %a %h' -- "$CONF")
   [[ $owner == 0 && $mode == 600 && $links == 1 ]] ||
     fail "FortiVPN configuration must be root-owned, mode 600, and not linked."
+}
+
+config_state() {
+  local owner mode links
+
+  if [[ -e $CONF_DIR || -L $CONF_DIR ]]; then
+    [[ -d $CONF_DIR && ! -L $CONF_DIR ]] || { printf '%s' invalid; return; }
+    owner=$(stat -c %u -- "$CONF_DIR")
+    mode=$(stat -c %a -- "$CONF_DIR")
+    [[ $owner == 0 && $((8#$mode & 0022)) == 0 ]] || { printf '%s' invalid; return; }
+  fi
+  [[ -e $CONF || -L $CONF ]] || { printf '%s' missing; return; }
+  [[ -f $CONF && ! -L $CONF ]] || { printf '%s' invalid; return; }
+  read -r owner mode links < <(stat -c '%u %a %h' -- "$CONF")
+  [[ $owner == 0 && $mode == 600 && $links == 1 ]] || { printf '%s' invalid; return; }
+
+  local field
+  for field in host port username password; do
+    grep -qE "^[[:space:]]*$field[[:space:]]*=[[:space:]]*." "$CONF" || { printf '%s' incomplete; return; }
+  done
+  printf '%s' ready
+}
+
+status() {
+  local config dependency unit code message trusted_certificate
+
+  config=$(config_state) || config=invalid
+  dependency=$(command -v openfortivpn || true)
+  unit=$(systemctl is-active "$UNIT.service" 2>/dev/null || true)
+  case "$unit" in active|activating|deactivating|failed|inactive) ;; *) unit=inactive ;; esac
+  trusted_certificate=false
+  [[ -f $CONF ]] && grep -qE '^[[:space:]]*trusted-cert[[:space:]]*=[[:space:]]*[[:xdigit:]]{64}[[:space:]]*$' "$CONF" && trusted_certificate=true
+
+  code=ready
+  message="FortiVPN is ready."
+  if [[ -z $dependency ]]; then
+    code=dependency_missing
+    message="openfortivpn is not installed."
+  elif [[ $config == invalid ]]; then
+    code=config_invalid
+    message="FortiVPN configuration is unsafe or invalid."
+  elif [[ $config != ready ]]; then
+    code=not_configured
+    message="FortiVPN connection details are incomplete."
+  fi
+
+  printf '%s\n' \
+    "interfaceVersion=$CONTROLLER_INTERFACE_VERSION" \
+    "controllerVersion=$CONTROLLER_VERSION" \
+    "code=$code" \
+    "message=$message" \
+    "dependencyPath=$dependency" \
+    "configState=$config" \
+    "trustedCertificate=$trusted_certificate" \
+    "unitState=$unit"
 }
 
 write_config() {
@@ -91,6 +148,10 @@ case "${1:-}" in
     [[ $# == 2 && $2 =~ ^[0-9]+\.[0-9]{3}$ ]] || fail "Usage: journal epoch-seconds"
     exec journalctl -u "$UNIT.service" -n 60 --no-pager --output=cat "--since=@$2"
     ;;
+  status)
+    [[ $# == 1 ]] || fail "Usage: status"
+    status
+    ;;
   start)
     [[ $# -le 2 ]] || fail "Usage: start [otp]"
     validate_config
@@ -105,6 +166,6 @@ case "${1:-}" in
     exec systemctl stop "$UNIT.service"
     ;;
   *)
-    fail "Usage: omarchy-fortivpn-helper {write|reset|journal|start|stop}"
+    fail "Usage: omarchy-fortivpn-helper {write|reset|journal|status|start|stop}"
     ;;
 esac

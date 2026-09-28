@@ -3,15 +3,46 @@
 set -euo pipefail
 
 HELPER=/usr/local/libexec/omarchy-fortivpn-helper
+CONTROLLER_INTERFACE_VERSION=1
 
 usage() {
-  printf '%s\n' "Usage: omarchy-fortivpn start [--push] | stop" >&2
+  printf '%s\n' "Usage: omarchy-fortivpn start [--push] | stop | status" >&2
   exit 2
+}
+
+controller_status() {
+  local interface
+  CONTROLLER_OUTPUT=$(sudo -n "$HELPER" status) || {
+    printf '%s\n' "FortiVPN controller needs installation or update. Run ./scripts/install-passwordless-helper.sh from the plugin directory." >&2
+    return 1
+  }
+  interface=$(status_field interfaceVersion) || {
+    printf '%s\n' "FortiVPN controller returned an invalid status response." >&2
+    return 1
+  }
+  CONTROLLER_CODE=$(status_field code) || {
+    printf '%s\n' "FortiVPN controller returned an invalid status response." >&2
+    return 1
+  }
+  [[ $interface == "$CONTROLLER_INTERFACE_VERSION" ]] || {
+    printf '%s\n' "FortiVPN controller interface is incompatible. Run ./scripts/install-passwordless-helper.sh from the plugin directory." >&2
+    return 1
+  }
+}
+
+status_field() {
+  local wanted=$1 key value
+  while IFS='=' read -r key value; do
+    [[ $key == "$wanted" ]] && { printf '%s' "$value"; return; }
+  done <<< "$CONTROLLER_OUTPUT"
+  return 1
 }
 
 case "${1:-}" in
   start)
     [[ $# == 1 || ( $# == 2 && $2 == --push ) ]] || usage
+    controller_status || exit 1
+    [[ $CONTROLLER_CODE == ready ]] || { printf '%s\n' "$CONTROLLER_OUTPUT" >&2; exit 1; }
     if [[ ${2:-} == --push ]]; then
       exec sudo -n "$HELPER" start
     fi
@@ -26,6 +57,12 @@ case "${1:-}" in
   stop)
     [[ $# == 1 ]] || usage
     exec sudo -n "$HELPER" stop
+    ;;
+  status)
+    [[ $# == 1 ]] || usage
+    controller_status || exit 1
+    printf '%s\n' "$CONTROLLER_OUTPUT"
+    [[ $CONTROLLER_CODE == ready ]]
     ;;
   *) usage ;;
 esac

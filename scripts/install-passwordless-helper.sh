@@ -9,17 +9,47 @@ SUDOERS=/etc/sudoers.d/omarchy-fortivpn
 if [[ ${1:-} == --install-root ]]; then
   [[ $# == 2 && $2 =~ ^[a-z_][a-z0-9_-]*\$?$ ]] || { printf '%s\n' "Invalid user name." >&2; exit 1; }
   script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+  install -d -o root -g root -m 755 "${HELPER%/*}" "${CLI%/*}" "${SUDOERS%/*}"
+  bash -n "$script_dir/omarchy-fortivpn-helper"
+  bash -n "$script_dir/omarchy-fortivpn"
+  "$script_dir/omarchy-fortivpn-helper" status >/dev/null
+
+  helper_tmp=$(mktemp "$HELPER.XXXXXX")
+  cli_tmp=$(mktemp "$CLI.XXXXXX")
   sudoers_tmp=$(mktemp "$SUDOERS.tmp.XXXXXX")
-  trap 'rm -f "$sudoers_tmp"' EXIT
-  printf '%s ALL=(root) NOPASSWD: %s reset, %s journal *, %s stop, %s start, %s start *\n' \
-    "$2" "$HELPER" "$HELPER" "$HELPER" "$HELPER" "$HELPER" > "$sudoers_tmp"
+  helper_backup=""
+  cli_backup=""
+  sudoers_backup=""
+  had_helper=false
+  had_cli=false
+  had_sudoers=false
+  committed=false
+  rollback() {
+    if [[ $committed != true ]]; then
+      if [[ $had_helper == true ]]; then mv -f "$helper_backup" "$HELPER" || true; else rm -f "$HELPER"; fi
+      if [[ $had_cli == true ]]; then mv -f "$cli_backup" "$CLI" || true; else rm -f "$CLI"; fi
+      if [[ $had_sudoers == true ]]; then mv -f "$sudoers_backup" "$SUDOERS" || true; else rm -f "$SUDOERS"; fi
+    fi
+    rm -f "$helper_tmp" "$cli_tmp" "$sudoers_tmp" "$helper_backup" "$cli_backup" "$sudoers_backup"
+  }
+  trap rollback EXIT
+  if [[ -e $HELPER ]]; then helper_backup=$(mktemp "$HELPER.backup.XXXXXX"); cp -a -- "$HELPER" "$helper_backup"; had_helper=true; fi
+  if [[ -e $CLI ]]; then cli_backup=$(mktemp "$CLI.backup.XXXXXX"); cp -a -- "$CLI" "$cli_backup"; had_cli=true; fi
+  if [[ -e $SUDOERS ]]; then sudoers_backup=$(mktemp "$SUDOERS.backup.XXXXXX"); cp -a -- "$SUDOERS" "$sudoers_backup"; had_sudoers=true; fi
+  install -o root -g root -m 755 "$script_dir/omarchy-fortivpn-helper" "$helper_tmp"
+  install -o root -g root -m 755 "$script_dir/omarchy-fortivpn" "$cli_tmp"
+  "$helper_tmp" status >/dev/null
+  printf '%s ALL=(root) NOPASSWD: %s reset, %s journal *, %s status, %s stop, %s start, %s start *\n' \
+    "$2" "$HELPER" "$HELPER" "$HELPER" "$HELPER" "$HELPER" "$HELPER" > "$sudoers_tmp"
   chown root:root "$sudoers_tmp"
   chmod 440 "$sudoers_tmp"
   visudo -cf "$sudoers_tmp"
-  mv "$sudoers_tmp" "$SUDOERS"
-  install -D -o root -g root -m 755 "$script_dir/omarchy-fortivpn-helper" "$HELPER"
-  install -D -o root -g root -m 755 "$script_dir/omarchy-fortivpn" "$CLI"
-  printf '%s\n' "Installed passwordless FortiVPN helper for $2."
+  mv -f "$helper_tmp" "$HELPER"
+  mv -f "$cli_tmp" "$CLI"
+  mv -f "$sudoers_tmp" "$SUDOERS"
+  "$HELPER" status >/dev/null
+  committed=true
+  printf '%s\n' "Installed and verified FortiVPN controller for $2."
   exit 0
 fi
 
