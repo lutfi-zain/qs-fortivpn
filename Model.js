@@ -101,8 +101,14 @@ function parseFailureSummary(text) {
   var lines = String(text || "").split(/\r?\n/).map(function(l) { return l.trim() }).filter(function(l) { return l !== "" })
   if (lines.length === 0) return ""
   var errorLine = ""
+  // openfortivpn's own "ERROR:" line carries the real cause; systemd's
+  // trailing "Failed to start …" lines would otherwise win the scan below.
   for (var i = lines.length - 1; i >= 0; i--) {
-    if (/error|fail|denied|invalid|expired|refused/i.test(lines[i])) { errorLine = lines[i]; break }
+    var m = lines[i].match(/^ERROR:\s*(.+)$/)
+    if (m) { errorLine = m[1]; break }
+  }
+  for (i = lines.length - 1; errorLine === "" && i >= 0; i--) {
+    if (/error|fail|denied|invalid|expired|refused/i.test(lines[i])) errorLine = lines[i]
   }
   var line = errorLine !== "" ? errorLine : lines[lines.length - 1]
   return line.length > 160 ? line.substring(0, 157) + "…" : line

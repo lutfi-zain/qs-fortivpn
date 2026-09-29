@@ -308,6 +308,9 @@ Item {
         root.state = "failed"
         root.lastError = Model.sanitizeField(root._startError || root._startOutput) || "Failed to start the VPN unit."
         root.actionStatus = ""
+        // state is already "failed", so the status poll won't see a
+        // transition; pull the journal now to replace systemd's generic text.
+        root.fetchFailureDetail()
       } else {
         startupRamp.restart()
       }
